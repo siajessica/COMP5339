@@ -8,6 +8,15 @@ import re
 ## openpyxl-3.1.5
 
 def crawl(url = "https://data.nsw.gov.au/data/dataset/fuel-check"):
+    """
+    Locate and extract download links for CSV and XLSX files that appear from the url from year 2024 to 2025
+    Args:
+        url (str, optional):    Starting url, 
+                                default the NSW web page, 
+                                basically this code will not work on different url. 
+    Returns:
+            list:    A list of string that contains the url to download the file
+    """
     try:
         response = requests.get(url)
         response.raise_for_status()  
@@ -32,6 +41,14 @@ def crawl(url = "https://data.nsw.gov.au/data/dataset/fuel-check"):
     return download_links
 
 def combine(download_links):
+    '''
+    Download and combines data from provided list of URLs from both .CSV and .XLSX into a single DataFrame
+    Args:
+        download_links (list): A list that contains all URLs from crawl funtion pointing to valid .CSV and .XLSX files
+
+    Returns:
+        pandas.DataFrame: a single combined data frame from all downloaded files. Return error if the url is not valid. 
+    '''
     dataframes = []
     print("I'm fetchin the data mate, hold yer horses... ")
     for url in download_links:
@@ -46,6 +63,12 @@ def combine(download_links):
     return(final_df)
 
 def save(dataframes, location='./All.csv'):
+    '''
+    Saves the provided pandas DataFrame into CSV file, tab-separated
+    Args:
+        dataframe (pandas.DataFrame)    : Dataframe to be saved
+        location(str, optional)         : Specified target path and filename, defaults to current directory with filename as ./A  
+    '''
     print("Combining it... ")
     dataframes.to_csv(location, sep='\t', encoding='utf-8', index=False, header=True)
     print("saved at current directory")
