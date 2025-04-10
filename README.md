@@ -19,4 +19,4 @@ Overall Deadline: Thursday, 17 April 2025
 * DB Integration + Data validation (2 people) - Son + Jessica
 
 ### Stage 4 Deadline: 16 April
-* Report
+* Report: https://docs.google.com/document/d/1x0Pm5IMz2TEHa9v67N9dAqBnyTLiaKugRRwPu_tWlBs/edit?usp=sharing
