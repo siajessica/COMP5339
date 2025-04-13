@@ -39,7 +39,7 @@ pip install -r requirements.txt
 
 ### 3. Run the Pipeline
 ```bash
-python app.py
+python run.py
 ```
 
 ## Outputs
