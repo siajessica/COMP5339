@@ -32,7 +32,7 @@ def save(dataframes, save_dir='data/', file_name = "all.csv"):
     os.makedirs(save_dir, exist_ok=True)
     
     location = os.path.join(save_dir, file_name)
-    dataframes.to_csv(location, sep='\t', encoding='utf-8', index=False, header=True)
+    dataframes.to_csv(location, sep=',', encoding='utf-8', index=False, header=True)
     print("saved at current directory")
     print("Complete!")
 
