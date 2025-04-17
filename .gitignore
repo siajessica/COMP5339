@@ -1,6 +1,5 @@
 *.ipynb
 de
-src/*
 creds
 creds/creds.json
 .venv

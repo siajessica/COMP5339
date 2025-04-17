@@ -276,9 +276,9 @@ class DataAugmentation():
             print("FINISH GETTING DATA FROM GOOGLE API")
 
             df_opening_hours = pd.DataFrame(opening_dict)
-            save(df_opening_hours, file_name="opening_hours_raw.csv")
+            save(df_opening_hours, file_name="opening_hours_raw.txt")
         else:
-            df_opening_hours = pd.read_csv("./data/opening_hours_raw.csv")
+            df_opening_hours = pd.read_csv("./data/opening_hours_raw.txt", delimiter='\t')
         
         def update_coordinates(row):
             coords = station_dict.get(row["ServiceStationName"])
@@ -348,7 +348,8 @@ class DataAugmentation():
         station_detail_table = df_merged[["ServiceStationName", "Address", "brand_name", "is_ad_blue_available", "latitude", "longitude"]]
 
         print("Getting data from Google Map API")
-        opening_hours_table, location_table = self.CombiningStationDetails(station_detail_table, request=False)
+        request = os.path.exists("data/opening_hours_raw.txt")
+        opening_hours_table, location_table = self.CombiningStationDetails(station_detail_table, request=request)
 
         station_detail_table = station_detail_table[["ServiceStationName", "Address", "brand_name", "is_ad_blue_available"]]
 
