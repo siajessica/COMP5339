@@ -28,7 +28,7 @@ class DataStorage:
             # self.conn.sql("SELECT * FROM BRAND LIMIT 10").show()
         elif file_path == "data/all.csv":
             self.conn.execute(f"""
-                CREATE TABLE augmented_data AS
+                CREATE TABLE IF NOT EXISTS augmented_data AS
                 SELECT * 
                 FROM read_csv('{file_path}', header = True, auto_detect = True)
             """)
@@ -39,7 +39,7 @@ class DataStorage:
         LocationID,Adress,location.latitude,location.longitude
         """
         self.conn.execute(f"""
-            CREATE TABLE location AS
+            CREATE TABLE IF NOT EXISTS location AS
             SELECT 
                 row_number() OVER () AS location_id,
                 address,
@@ -64,7 +64,7 @@ class DataStorage:
         ServiceStationID(PK),ServiceStationName,LocationID(FK),BrandID(FK),isAdBlueAvailable
         """
         self.conn.execute(f"""
-            CREATE TABLE service_station (
+            CREATE TABLE IF NOT EXISTS service_station (
                 station_id BIGINT PRIMARY KEY,
                 service_station_name VARCHAR,
                 is_ad_blue_available BOOL,
@@ -97,9 +97,7 @@ class DataStorage:
                 INNER JOIN
                     location l
                 ON
-                    l.address = ad.Address AND
-                    l.longitude = ad."location.longitude" AND
-                    l.latitude = ad."location.latitude"
+                    l.address = ad.Address
             )
         """)
         # self.conn.sql("SELECT * FROM service_station LIMIT 15").show()
@@ -110,13 +108,12 @@ class DataStorage:
         Remember to Partition based on FuelCode, Daily/Weekly
         """  
         self.conn.execute(f"""
-            CREATE TABLE fuel_price (
-                station_id BIGINT,
+            CREATE TABLE IF NOT EXISTS fuel_price (
+                station_id BIGINT REFERENCES service_station(station_id),
                 fuel_code VARCHAR,
-                price_updated_date DATETIME,
+                price_updated_date TIMESTAMP,
                 price FLOAT,
-                --CONSTRAINT fk_station FOREIGN KEY (station_id) REFERENCES service_station(station_id),
-                --CONSTRAINT pk_fuel_price PRIMARY KEY (station_id, fuel_code, price_updated_date)
+                CONSTRAINT pk_fuel_price PRIMARY KEY (station_id, fuel_code, price_updated_date)
             )
         """)
         self.conn.execute(f"""
@@ -133,17 +130,12 @@ class DataStorage:
             ON
                 s.service_station_name = ad.ServiceStationName
         """)
-        # self.conn.execute(f"""
-        #     ALTER TABLE fuel_price
-        #     ADD CONSTRAINT pk_fuel_price PRIMARY KEY (station_id, fuel_code, price_updated_date);
-        # """)
-        # self.conn.sql("SELECT * FROM fuel_price LIMIT 15").show()
+        self.conn.sql("SELECT * FROM fuel_price LIMIT 15").show()
 
     def drop_all_tables(self):
         tables = ["fuel_price", "service_station", "location", "brand", "augmented_data"]
         for table in tables:
             self.conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
-
 
     def load_db(self):
         """
@@ -153,6 +145,6 @@ class DataStorage:
         self.drop_all_tables()
         self.load_data("data/brand.csv")
         self.load_data("data/all.csv")
-        self.create_location_table()
-        self.create_service_station_table()
-        self.create_fuel_price_table()
+        # self.create_location_table()
+        # self.create_service_station_table()
+        # self.create_fuel_price_table()

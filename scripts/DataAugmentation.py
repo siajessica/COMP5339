@@ -21,6 +21,7 @@ class DataAugmentation():
         self.API_SECRET_FUEL = creds["API_SECRET_FUEL"]
         self.AUTH_FUEL = creds["AUTH_FUEL"]
         self.API_BRANDFETCH = creds["API_BRANDFETCH"]
+        self.GOOGLE_MAP_API = creds["GOOGLE_MAP_API"]
         
     def __read_creds(self, creds_path = "creds/creds.json"):
         """
@@ -50,7 +51,7 @@ class DataAugmentation():
         download_links = []
         for link in soup.find_all("a", href=True):
             href = link["href"]
-            if href and (href.endswith(".csv") or href.endswith(".xlsx")) and ("m24." in href or "mar25." in href):
+            if href and (href.endswith(".csv") or href.endswith(".xlsx")) and ("24." in href or "25." in href):
                 download_links.append(href)
         if download_links:
             #print("Download links found (2024 or 2025):")
@@ -64,29 +65,6 @@ class DataAugmentation():
         df = convert_link_to_df(download_links)
         return df
 
-    def OpenStreetMapAPI(self, query):
-        """
-        Getting the Lattitude and Longitude using the OpenStreetMapAPI
-        Args:
-                query: the cities or location we would like to get its latitude and longitude
-        Returns:
-                tuple: (latitude, longitude)
-        """
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            'q': query,
-            'format': 'json'
-        }
-        headers = {
-            'User-Agent': 'FuelCheck'
-        }
-        data = crawler(url, headers=headers, params=params, to_json=True)
-        if data:
-            return data[0]['lat'], data[0]['lon']
-        else:
-            print("No Latitude Longitude Found")
-            return None, None
-        
     def GetFuelAccessToken(self):
         """
         Getting the accesstoken from the Fuel API security https://api.nsw.gov.au/Documentation/GenerateHar/22
@@ -127,6 +105,39 @@ class DataAugmentation():
         stations = resp.get("stations", []) 
         df_station_api = pd.json_normalize(stations) 
         return df_station_api
+
+    def GoogleMapAPI(self, query):
+        # Endpoint
+        url = "https://places.googleapis.com/v1/places:searchText"
+
+        # Headers
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": self.GOOGLE_MAP_API,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.regularOpeningHours"
+        }
+
+        # Request body
+        data = {
+            "textQuery": query,
+        }
+
+        try:
+            # Make the POST request
+            response = requests.post(url, headers=headers, json=data)
+            places = response.json().get("places", [])
+            return places
+        except Exception as e:
+            print("ERROR FETCHING GOOGLE MAP API: ", e)
+            print(response.text)
+            return None
+
+    def clean_opening_hour(self, entry):
+        # Remove any unicode narrow no-break space or thin space
+        cleaned = re.sub(r'[\u202f\u2009]', ' ', entry)
+        # Split into day and hour
+        weekday, hours = cleaned.split(': ', 1)
+        return weekday, hours
 
     def BrandFetchAPI(self, company, root_save_dir = "src/", save =True):
         """
@@ -187,9 +198,99 @@ class DataAugmentation():
             
         df_brand = pd.DataFrame(company_data)
         return df_brand
-            
     
-    def DataAugmented(self, combine_all = False, deep_search = True, save_dir = "data/", fuel_name = "fuel_price.csv", station_name = "station_detail.csv", brand_name = "brand.csv"):
+    def DataCleaning(self, df):
+        """
+        This is the step to clean the data. 
+        The data has some duplicated data that needs to be cleaned
+        Args:
+            df: Dataframe to be cleaned
+        Returns:
+            df: the cleaned Dataframe
+        """
+        
+        # Removing Duplicates
+        df = df.groupby(['ServiceStationName', 'Address','FuelCode', 'PriceUpdatedDate'], as_index=False).agg({
+            'Suburb': 'first',
+            'Postcode': 'first',
+            'Brand': 'first',
+            'Price': 'mean'
+        })
+
+        # Convert PriceUpdateDate to Timestamp
+        df["PriceUpdatedDate"] = pd.to_datetime(df['PriceUpdatedDate'])
+        return df
+
+    def CombiningStationDetails(self, df_fuel):
+        station_dict = {}
+        opening_dict = []
+        
+        print("Combining Data from Google API")
+
+        ## Getting all the unique station
+        unique_stations = list(df_fuel[["ServiceStationName"]].drop_duplicates()["ServiceStationName"])
+        df_location = df_fuel.copy()
+
+        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+        for station in unique_stations:
+            resp = self.GoogleMapAPI(station)
+
+            if resp is None or len(resp) == 0:
+                print(f"Station Not Found {station}")
+                continue
+
+            resp = resp[0]
+            station_dict[station] = {
+                "longitude": resp["location"]["longitude"],
+                "latitude": resp["location"]["latitude"]
+            }
+            try:
+                for idx, p in enumerate(resp["regularOpeningHours"]["periods"]):
+                    if "close" in p.keys():
+                        opening_dict.append({
+                            "ServiceStationName": station,
+                            "day_of_week": days[p["open"]["day"]],
+                            "open_time": f'{p["open"]["hour"]:02d}:{p["open"]["minute"]:02d}',
+                            "close_time": f'{p["close"]["hour"]:02d}:{p["close"]["minute"]:02d}'
+                        })
+                    else:
+                        if "regularOpeningHours" in resp.keys():
+                            for day in resp["regularOpeningHours"]["weekdayDescriptions"]:
+                                opening_dict.append({
+                                    "ServiceStationName": station,
+                                    "day_of_week": re.sub(r':.*$', '', day).strip(),
+                                    "open_time": "00:00",
+                                    "close_time": "24:00"
+                                })
+                        else:
+                            print(f"Station has no opening hours: {station}")
+                            continue
+            except Exception as e:
+                print(f"Station has no opening hours: {station}")
+                continue
+        
+        df_opening_hours = pd.DataFrame(opening_dict)
+
+        df_location["latitude"] = df_location["ServiceStationName"].map(
+            lambda x: station_dict.get(x, {}).get("latitude", df_location.loc[df_location["ServiceStationName"] == x, "latitude"].values[0])
+        )
+        df_location["longitude"] = df_location["ServiceStationName"].map(
+            lambda x: station_dict.get(x, {}).get("longitude", df_location.loc[df_location["ServiceStationName"] == x, "longitude"].values[0])
+        )
+        df_location = df_location[["Address", "latitude", "longitude"]]
+
+        return df_opening_hours, df_location
+
+    def __extract_to_parquet(self, df, table_name, partition = None, save_dir = "./data"):
+        df.to_parquet(
+            f'{save_dir}/{table_name}',
+            partition_cols=partition,
+            engine='pyarrow',
+            index=False
+        )
+
+    def DataAugmented(self, combine_all = False, deep_search = True, save_dir = "data/", fuel_name = "fuel_price.csv", station_name = "station_detail.csv", brand_name = "brand.csv", cleaning = True):
         """
         This is used to combine all the sources into multiple Dataframes to be processed further to the database
         Args:
@@ -204,37 +305,51 @@ class DataAugmentation():
             response: the image link or local path
         """
         df_fuel_price = self.FuelCheckIntegration()
+        print("Cleaning Data")
+        df_fuel_price = self.DataCleaning(df_fuel_price)     
+
+        print("Getting Data from Fuel Price API for Ad Blue")
         df_station_details = self.FuelStationIntegration()
+
         company_lst = list(df_station_details["brand"].unique())
         df_brand = self.BrandLogoIntegration(company_lst)
+
+        # Putting the isAdBlue Field inside the main table
+        print("Combining Fuel Price and the External API")
+        df_merged = df_fuel_price.merge(
+                        df_station_details[["location.latitude", "location.longitude","isAdBlueAvailable", "name"]],
+                        how="left", 
+                        left_on="ServiceStationName", 
+                        right_on="name" 
+                    )
+        df_merged.drop("name",axis=1, inplace=True)
+
+        df_merged.rename(columns={'Brand': 'brand_name'}, inplace=True)
+        df_merged.rename(columns={'location.latitude': 'latitude'}, inplace=True)
+        df_merged.rename(columns={'location.longitude': 'longitude'}, inplace=True)
+        df_merged.rename(columns={'isAdBlueAvailable': 'is_ad_blue_available'}, inplace=True)
+        df_brand.rename(columns={'Brand': 'brand_name'}, inplace=True)
         
-        save(df_fuel_price, save_dir, file_name=fuel_name)
-        save(df_station_details, save_dir, file_name=station_name)
+        # Creating table to be extract to parquet
+        fact_table = df_merged[["ServiceStationName", "FuelCode", "PriceUpdatedDate", "Price"]]
+        station_detail_table = df_merged[["ServiceStationName", "Address", "brand_name", "is_ad_blue_available", "latitude", "longitude"]]
+
+        print("Getting data from Google Map API")
+        opening_hours_table, location_table = self.CombiningStationDetails(station_detail_table)
+
+        station_detail_table = station_detail_table["ServiceStationName", "Address", "brand_name", "is_ad_blue_available"]
+
+        # Save to csv for debuging purpose
+        save(fact_table, save_dir, file_name=fuel_name)
+        save(station_detail_table, save_dir, file_name=station_name)
         save(df_brand, save_dir, file_name=brand_name)
-        
-        if combine_all:
-            df_merged = df_fuel_price.merge(
-                            df_station_details[["location.latitude", "location.longitude", "isAdBlueAvailable", "name"]],
-                            how="left", 
-                            left_on="ServiceStationName", 
-                            right_on="name" 
-                        )
-            df_merged.drop("name",axis=1, inplace=True)
-            
-            if deep_search:
-                missing_address = df_merged[df_merged["location.latitude"].isna()]["Address"].unique()
-                for miss_long_lat in missing_address:
-                    long, lat = self.OpenStreetMapAPI(miss_long_lat)
-                    
-                    df_merged.loc[
-                        df_merged["Address"] == miss_long_lat,
-                        "location.latitude"
-                    ] = lat
-                    
-                    df_merged.loc[
-                        df_merged["Address"] == miss_long_lat,
-                        "location.longitude"
-                    ] = long
-                
-                
-            save(df_merged)
+        save(opening_hours_table, save_dir, file_name="opening_hours.csv")
+        save(location_table, save_dir, file_name="location.csv")
+
+        #Extract to Parquet Files
+        print("Extracting data to parquet")
+        self.__extract_to_parquet(fact_table, "fuel_price", partition=["FuelCode"])
+        self.__extract_to_parquet(station_detail_table, "service_station")
+        self.__extract_to_parquet(opening_hours_table, "opening_hours")
+        self.__extract_to_parquet(location_table, "location")
+        self.__extract_to_parquet(df_brand, "brand")

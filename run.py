@@ -12,5 +12,5 @@ You can analyze these dataframes to be used for the next part which is the datas
 da = DataAugmentation()
 da.DataAugmented(combine_all=True, deep_search=True)
 
-ds = DataStorage("data/database.db")
-ds.load_db()
+# ds = DataStorage("data/database.db")
+# ds.load_db()
