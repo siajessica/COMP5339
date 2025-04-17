@@ -1,6 +1,5 @@
 *.ipynb
 de
-data
 src/*
 creds
 creds/creds.json

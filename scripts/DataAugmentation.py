@@ -221,7 +221,7 @@ class DataAugmentation():
         df["PriceUpdatedDate"] = pd.to_datetime(df['PriceUpdatedDate'])
         return df
 
-    def CombiningStationDetails(self, df_fuel):
+    def CombiningStationDetails(self, df_fuel, request = False):
         station_dict = {}
         opening_dict = []
         
@@ -233,51 +233,64 @@ class DataAugmentation():
 
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
-        for station in unique_stations:
-            resp = self.GoogleMapAPI(station)
+        if request:
+            for station in unique_stations:
+                print(f"Getting data for {station}")
+                resp = self.GoogleMapAPI(station)
 
-            if resp is None or len(resp) == 0:
-                print(f"Station Not Found {station}")
-                continue
+                if resp is None or len(resp) == 0:
+                    print(f"Station Not Found {station}")
+                    continue
 
-            resp = resp[0]
-            station_dict[station] = {
-                "longitude": resp["location"]["longitude"],
-                "latitude": resp["location"]["latitude"]
-            }
-            try:
-                for idx, p in enumerate(resp["regularOpeningHours"]["periods"]):
-                    if "close" in p.keys():
-                        opening_dict.append({
-                            "ServiceStationName": station,
-                            "day_of_week": days[p["open"]["day"]],
-                            "open_time": f'{p["open"]["hour"]:02d}:{p["open"]["minute"]:02d}',
-                            "close_time": f'{p["close"]["hour"]:02d}:{p["close"]["minute"]:02d}'
-                        })
-                    else:
-                        if "regularOpeningHours" in resp.keys():
-                            for day in resp["regularOpeningHours"]["weekdayDescriptions"]:
-                                opening_dict.append({
-                                    "ServiceStationName": station,
-                                    "day_of_week": re.sub(r':.*$', '', day).strip(),
-                                    "open_time": "00:00",
-                                    "close_time": "24:00"
-                                })
+                resp = resp[0]
+                station_dict[station] = {
+                    "longitude": resp["location"]["longitude"],
+                    "latitude": resp["location"]["latitude"]
+                }
+                try:
+                    for idx, p in enumerate(resp["regularOpeningHours"]["periods"]):
+                        print("Getting Opening Hours")
+                        if "close" in p.keys():
+                            opening_dict.append({
+                                "ServiceStationName": station,
+                                "day_of_week": days[p["open"]["day"]],
+                                "open_time": f'{p["open"]["hour"]:02d}:{p["open"]["minute"]:02d}',
+                                "close_time": f'{p["close"]["hour"]:02d}:{p["close"]["minute"]:02d}'
+                            })
                         else:
-                            print(f"Station has no opening hours: {station}")
-                            continue
-            except Exception as e:
-                print(f"Station has no opening hours: {station}")
-                continue
+                            if "regularOpeningHours" in resp.keys():
+                                for day in resp["regularOpeningHours"]["weekdayDescriptions"]:
+                                    opening_dict.append({
+                                        "ServiceStationName": station,
+                                        "day_of_week": re.sub(r':.*$', '', day).strip(),
+                                        "open_time": "00:00",
+                                        "close_time": "24:00"
+                                    })
+                            else:
+                                print(f"Station has no opening hours: {station}")
+                                continue
+                except Exception as e:
+                    print(f"Station has no opening hours: {station}")
+                    continue
         
-        df_opening_hours = pd.DataFrame(opening_dict)
+            print("FINISH GETTING DATA FROM GOOGLE API")
 
-        df_location["latitude"] = df_location["ServiceStationName"].map(
-            lambda x: station_dict.get(x, {}).get("latitude", df_location.loc[df_location["ServiceStationName"] == x, "latitude"].values[0])
-        )
-        df_location["longitude"] = df_location["ServiceStationName"].map(
-            lambda x: station_dict.get(x, {}).get("longitude", df_location.loc[df_location["ServiceStationName"] == x, "longitude"].values[0])
-        )
+            df_opening_hours = pd.DataFrame(opening_dict)
+            save(df_opening_hours, file_name="opening_hours_raw.csv")
+        else:
+            df_opening_hours = pd.read_csv("./data/opening_hours_raw.csv")
+        
+        def update_coordinates(row):
+            coords = station_dict.get(row["ServiceStationName"])
+            if coords:
+                lat = coords.get("latitude", row["latitude"])
+                lon = coords.get("longitude", row["longitude"])
+            else:
+                lat = row["latitude"]
+                lon = row["longitude"]
+            return pd.Series([lat, lon], index=["latitude", "longitude"])
+
+        df_location[["latitude", "longitude"]] = df_location.apply(update_coordinates, axis=1)
         df_location = df_location[["Address", "latitude", "longitude"]]
 
         return df_opening_hours, df_location
@@ -335,9 +348,9 @@ class DataAugmentation():
         station_detail_table = df_merged[["ServiceStationName", "Address", "brand_name", "is_ad_blue_available", "latitude", "longitude"]]
 
         print("Getting data from Google Map API")
-        opening_hours_table, location_table = self.CombiningStationDetails(station_detail_table)
+        opening_hours_table, location_table = self.CombiningStationDetails(station_detail_table, request=False)
 
-        station_detail_table = station_detail_table["ServiceStationName", "Address", "brand_name", "is_ad_blue_available"]
+        station_detail_table = station_detail_table[["ServiceStationName", "Address", "brand_name", "is_ad_blue_available"]]
 
         # Save to csv for debuging purpose
         save(fact_table, save_dir, file_name=fuel_name)
